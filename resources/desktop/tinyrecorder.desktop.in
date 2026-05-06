@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TinyRecorder
+Comment=Compact system tray speech-to-text app
+Exec=@EXEC_PATH@
+TryExec=@EXEC_PATH@
+Icon=tinyrecorder
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+Keywords=speech;transcription;voice;microphone;recording;
+StartupNotify=false
+StartupWMClass=tinyrecorder

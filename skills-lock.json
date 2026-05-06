@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "skills": {
+    "architecting-python-changes": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/architecting-python-changes/SKILL.md",
+      "computedHash": "a5d0c8a1e4f7f47e912eb10985a1f70f1b31109fc3a358dfae67ea9985249a73"
+    },
+    "building-multi-ui-apps": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/building-multi-ui-apps/SKILL.md",
+      "computedHash": "0871f5ac1906198ad1882057c65bf49a1d2f87c8656b45533c0da42118f2897a"
+    },
+    "building-python-backends": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/building-python-backends/SKILL.md",
+      "computedHash": "c580a17be54da9a89aa5c11fd543f207b2cdc419fc0960e5c35f32e24ebb3e8e"
+    },
+    "building-qt-apps": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/building-qt-apps/SKILL.md",
+      "computedHash": "2d24596786766f9905c79d527bcf4b9c005eb140bd5e273feafa475a9a36fdf6"
+    },
+    "qt-app-interaction": {
+      "source": "quick-brown-foxxx/pyqt-agent-infra",
+      "sourceType": "github",
+      "computedHash": "14c2ba72706a73063d6361c525db37aea2b5ac19b504a2d62dc96bb560cd6781"
+    },
+    "qt-desktop-integration": {
+      "source": "quick-brown-foxxx/pyqt-agent-infra",
+      "sourceType": "github",
+      "computedHash": "4d4d86c4349d91186dbd0ee99366fae981e1c39ec69d3c48562abf17b754d28e"
+    },
+    "qt-dev-tools-setup": {
+      "source": "quick-brown-foxxx/pyqt-agent-infra",
+      "sourceType": "github",
+      "computedHash": "91b968aa695087e9613f6044dc6fce091dbc6161194a9d43a3041f33a02fdeaa"
+    },
+    "qt-form-and-input": {
+      "source": "quick-brown-foxxx/pyqt-agent-infra",
+      "sourceType": "github",
+      "computedHash": "5635f5f89bfc34b84a18c42d5726c5e773f44d3ff74beef386cce18c518849ff"
+    },
+    "qt-runtime-eval": {
+      "source": "quick-brown-foxxx/pyqt-agent-infra",
+      "sourceType": "github",
+      "computedHash": "cb57f058c149ee65140bac01d9021757339e1bf390b5bc7fd22473b5032a3d83"
+    },
+    "setting-up-logging": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/setting-up-logging/SKILL.md",
+      "computedHash": "97ec5999708cdb410ea25b210d2c7af36dcd5090a7e522999b9344b3c4c2b588"
+    },
+    "setting-up-python-backends": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/setting-up-python-backends/SKILL.md",
+      "computedHash": "cfac7a27268fd2813061a9ccdda8756d1361f1dd75c45351b4b9a789083180a9"
+    },
+    "setting-up-python-projects": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/setting-up-python-projects/SKILL.md",
+      "computedHash": "aeaf47f0e53114e6a1167a83d82610765b814808d703f778fee43199a9262fa7"
+    },
+    "setting-up-shortcuts": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/setting-up-shortcuts/SKILL.md",
+      "computedHash": "c396f55f8167319aa796ad77f52bca0dbc75f13030d2a231cf98f4a8057e5115"
+    },
+    "testing-python": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/testing-python/SKILL.md",
+      "computedHash": "1221164c21b7b6f1f5d708d27baa7c60dde2837aa93cee5fad46aa06386ee75d"
+    },
+    "writing-python-code": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/writing-python-code/SKILL.md",
+      "computedHash": "ea76b7f2f47c62a3d81f9f6915c53cdac15e0ab4369c9ea548546a50681e6063"
+    },
+    "writing-python-scripts": {
+      "source": "quick-brown-foxxx/coding_rules_python",
+      "sourceType": "github",
+      "skillPath": "skills/writing-python-scripts/SKILL.md",
+      "computedHash": "eef911c16d6a1ac3b591ef1dab9938c145eb973251ec4b13ec0e346619ce2a31"
+    }
+  }
+}

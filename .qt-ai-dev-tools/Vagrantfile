@@ -1,0 +1,29 @@
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.hostname = "qt-dev"
+
+  
+
+  config.vm.provider "libvirt" do |v|
+    v.memory = 4096
+    v.cpus = 4
+    v.management_network_name = "default"
+    v.management_network_address = "192.168.122.0/24"
+    
+  end
+
+  # NOTE: VirtualBox provider is NOT TESTED. Only libvirt has been verified.
+  config.vm.provider "virtualbox" do |v|
+    v.memory = 4096
+    v.cpus = 4
+    v.gui = false
+    v.customize ["modifyvm", :id, "--audio", "none"]
+  end
+
+  config.vm.synced_folder "../", "/vagrant",
+    type: "rsync",
+    rsync__exclude: [".git/", ".vagrant/", ".venv/"]
+
+  config.ssh.insert_key = true
+  config.vm.provision "shell", path: "provision.sh"
+end
