@@ -6,6 +6,8 @@ Press record, talk, and get text back. It is built for quick everyday use: tray 
 
 This repo is still an early MVP, but it already works as a real app.
 
+<img src="./docs/illustrations/screenshot.png" alt="screenshot" width="420" />
+
 ## Run It
 
 The only dependency is `uv`.
