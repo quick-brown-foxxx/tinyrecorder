@@ -23,12 +23,14 @@ optional LLM punctuation post-processing, TOML config, and JSONL history.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
 import shutil
 import signal
 import struct
+import subprocess
 import sys
 import time
 import tomllib
@@ -116,6 +118,8 @@ TRAY_NEUTRAL_COLOR: Final = "#eff0f1"
 TRAY_ERROR_COLOR: Final = "#da4453"
 TRAY_DONE_COLOR: Final = "#27ae60"
 TRAY_DONE_MSEC: Final = 1000
+COMPLETION_SOUND_PATH: Final = "/usr/share/sounds/freedesktop/stereo/complete.oga"
+WL_COPY_TIMEOUT_SEC: Final = 10
 MODEL_PRICES_PER_MINUTE: Final[dict[str, float]] = {
     "gpt-4o-mini-transcribe": 0.003,
     "gpt-4o-transcribe": 0.006,
@@ -283,6 +287,103 @@ def resolve_tray_icon_state(state: RecordingState, *, show_done: bool) -> TrayIc
     if state == RecordingState.SUCCESS and show_done:
         return TrayIconState.DONE
     return TrayIconState.IDLE
+
+
+class CopyStrategy(StrEnum):
+    """Copy path chosen based on focus and available clipboard tools."""
+
+    FOCUSED_QT = "focused_qt"
+    WL_CLIPBOARD = "wl_clipboard"
+    UNAVAILABLE = "unavailable"
+
+
+def resolve_copy_strategy(*, focused: bool, wl_available: bool) -> CopyStrategy:
+    """Pick how to copy a transcript: Qt when focused, wl-copy otherwise."""
+
+    if focused:
+        return CopyStrategy.FOCUSED_QT
+    if wl_available:
+        return CopyStrategy.WL_CLIPBOARD
+    return CopyStrategy.UNAVAILABLE
+
+
+def app_has_focus() -> bool:
+    """Return whether any of the app's windows currently has keyboard focus."""
+
+    return QGuiApplication.applicationState() == Qt.ApplicationState.ApplicationActive
+
+
+def wl_copy_available() -> bool:
+    """Return whether the wl-copy CLI is present on this system."""
+
+    return sys.platform.startswith("linux") and shutil.which("wl-copy") is not None
+
+
+def _run_quiet(argv: list[str]) -> None:
+    """Launch a subprocess fire-and-forget; silently ignore any failure."""
+
+    with contextlib.suppress(OSError):
+        subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # noqa: S603  # trusted local CLI, no shell
+
+
+def notify_transcription_ready() -> None:
+    """Pop up a low-urgency desktop notification that a transcript is ready."""
+
+    if shutil.which("notify-send") is None:
+        return
+    _run_quiet(
+        [
+            "notify-send",
+            "--expire-time",
+            "3000",
+            "--urgency",
+            "low",
+            "--app-name",
+            APP_NAME,
+            APP_NAME,
+            "Transcript ready",
+        ]
+    )
+
+
+def play_completion_sound() -> None:
+    """Play the completion sound; missing binary or file is silently ignored."""
+
+    _run_quiet(["paplay", COMPLETION_SOUND_PATH])
+
+
+def copy_with_wl_copy(text: str) -> AppResult[None]:
+    """Copy text into the clipboard through wl-copy (keeps clipboard alive)."""
+
+    wl_copy_bin = shutil.which("wl-copy")
+    if wl_copy_bin is None:
+        return Err("wl-copy is not available")
+    try:
+        result = subprocess.run(  # noqa: S603  # trusted local CLI, no shell
+            [wl_copy_bin, "--type", "text/plain"],
+            input=text.encode("utf-8"),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=WL_COPY_TIMEOUT_SEC,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return Err(f"Failed to run wl-copy: {exc}")
+    if result.returncode != 0:
+        return Err(f"wl-copy exited with code {result.returncode}")
+    return Ok(None)
+
+
+def copy_to_clipboard(text: str, *, focused: bool) -> AppResult[None]:
+    """Copy text to the clipboard using the strategy appropriate for focus state."""
+
+    strategy = resolve_copy_strategy(focused=focused, wl_available=wl_copy_available())
+    if strategy == CopyStrategy.FOCUSED_QT:
+        QGuiApplication.clipboard().setText(text)
+        return Ok(None)
+    if strategy == CopyStrategy.WL_CLIPBOARD:
+        return copy_with_wl_copy(text)
+    return Err("Cannot copy transcript: no wl-clipboard tool and the app is not focused. Copy without focus is not supported.")
 
 
 def _xdg_path(env_name: str, fallback: str) -> Path:
@@ -1745,6 +1846,11 @@ class TinyRecorderController(QObject):
         if transcript.warning:
             QMessageBox.warning(self.window, APP_NAME, transcript.warning)
 
+        focused = app_has_focus()
+        if not focused:
+            notify_transcription_ready()
+            play_completion_sound()
+
         history_entry = HistoryEntry(
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             audio_file=audio_path.name,
@@ -1759,13 +1865,22 @@ class TinyRecorderController(QObject):
             self._history.insert(0, history_entry)
 
         if self._config.auto_copy:
-            clipboard = QGuiApplication.clipboard()
-            clipboard.setText(transcript.text)
+            copied = copy_to_clipboard(transcript.text, focused=focused)
+            if copied.is_err:
+                self._show_clipboard_error(copied.unwrap_err())
 
     def copy_transcript(self) -> None:
         if not self._current_transcript:
             return
-        QGuiApplication.clipboard().setText(self._current_transcript)
+        copied = copy_to_clipboard(self._current_transcript, focused=app_has_focus())
+        if copied.is_err:
+            self._show_clipboard_error(copied.unwrap_err())
+
+    def _show_clipboard_error(self, message: str) -> None:
+        self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()
+        QMessageBox.warning(self.window, APP_NAME, message)
 
     def show_settings(self) -> None:
         dialog = SettingsDialog(self._config, self._paths.audio_dir, self.window)

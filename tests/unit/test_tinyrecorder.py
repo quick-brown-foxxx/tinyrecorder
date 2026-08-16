@@ -7,18 +7,23 @@ import sys
 import wave
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import numpy as np
 import pytest
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 from pytest_httpserver import HTTPServer
+from rusty_results.prelude import Ok
 
 import tinyrecorder
 from tinyrecorder import (
+    COMPLETION_SOUND_PATH,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_PROMPT,
     AppConfig,
+    CopyStrategy,
     HistoryEntry,
     LLMPostProcessor,
     MainWindow,
@@ -37,13 +42,18 @@ from tinyrecorder import (
     can_postprocess_with_config,
     can_trigger_record_action,
     convert_pcm_to_wav,
+    copy_to_clipboard,
+    copy_with_wl_copy,
     create_application,
     create_default_config,
     guess_audio_content_type,
     list_input_devices,
     load_config,
     load_history,
+    notify_transcription_ready,
+    play_completion_sound,
     render_svg_icon,
+    resolve_copy_strategy,
     resolve_llm_prompt,
     resolve_tray_icon_state,
     save_config,
@@ -627,3 +637,122 @@ def test_settings_dialog_applies_llm_fields(qapp: QApplication, tmp_path: Path) 
     assert updated.llm_reasoning_effort == "high"
     assert updated.llm_prompt == "Custom prompt"
     assert updated.llm_enabled == config.llm_enabled
+
+
+def test_resolve_copy_strategy_decision_table() -> None:
+    assert resolve_copy_strategy(focused=True, wl_available=False) == CopyStrategy.FOCUSED_QT
+    assert resolve_copy_strategy(focused=True, wl_available=True) == CopyStrategy.FOCUSED_QT
+    assert resolve_copy_strategy(focused=False, wl_available=True) == CopyStrategy.WL_CLIPBOARD
+    assert resolve_copy_strategy(focused=False, wl_available=False) == CopyStrategy.UNAVAILABLE
+
+
+def test_copy_with_wl_copy_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    invoked: list[tuple[list[str], bytes]] = []
+    monkeypatch.setattr("tinyrecorder.shutil.which", lambda _name: "/usr/bin/wl-copy")
+
+    def fake_run(*args: object, **kwargs: object) -> SimpleNamespace:
+        invoked.append((cast(list[str], args[0]), cast(bytes, kwargs["input"])))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("tinyrecorder.subprocess.run", fake_run)
+
+    result = copy_with_wl_copy("hello world")
+
+    assert result.is_ok
+    assert invoked == [(["/usr/bin/wl-copy", "--type", "text/plain"], b"hello world")]
+
+
+def test_copy_with_wl_copy_failure_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tinyrecorder.shutil.which", lambda _name: "/usr/bin/wl-copy")
+    monkeypatch.setattr(
+        "tinyrecorder.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1),
+    )
+
+    result = copy_with_wl_copy("text")
+
+    assert result.is_err
+
+
+def test_copy_with_wl_copy_missing_binary_does_not_run_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tinyrecorder.shutil.which", lambda _name: None)
+
+    def fail(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        raise AssertionError("subprocess.run must not be called")
+
+    monkeypatch.setattr("tinyrecorder.subprocess.run", fail)
+
+    result = copy_with_wl_copy("text")
+
+    assert result.is_err
+
+
+def test_notify_transcription_ready_silent_without_notify_send(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tinyrecorder.shutil.which", lambda _name: None)
+    pops: list[list[str]] = []
+    monkeypatch.setattr("tinyrecorder.subprocess.Popen", lambda argv, **_kwargs: pops.append(argv))
+
+    notify_transcription_ready()
+
+    assert pops == []
+
+
+def test_notify_transcription_ready_uses_low_urgency(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tinyrecorder.shutil.which", lambda _name: "/usr/bin/notify-send")
+    pops: list[list[str]] = []
+    monkeypatch.setattr("tinyrecorder.subprocess.Popen", lambda argv, **_kwargs: pops.append(argv))
+
+    notify_transcription_ready()
+
+    assert pops == [
+        ["notify-send", "--urgency", "low", "--app-name", "TinyRecorder", "TinyRecorder", "Transcript ready"]
+    ]
+
+
+def test_play_completion_sound_plays_fixed_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    pops: list[list[str]] = []
+    monkeypatch.setattr("tinyrecorder.subprocess.Popen", lambda argv, **_kwargs: pops.append(argv))
+
+    play_completion_sound()
+
+    assert pops == [["paplay", COMPLETION_SOUND_PATH]]
+
+
+def test_play_completion_sound_ignores_missing_paplay(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(argv: list[str], **_: object) -> object:
+        raise FileNotFoundError(argv[0])
+
+    monkeypatch.setattr("tinyrecorder.subprocess.Popen", fail)
+
+    play_completion_sound()  # must not raise
+
+
+def test_copy_to_clipboard_focused_uses_qt_clipboard(qapp: QApplication) -> None:
+    result = copy_to_clipboard("hello", focused=True)
+
+    assert result.is_ok
+    assert QGuiApplication.clipboard().text() == "hello"
+
+
+def test_copy_to_clipboard_unfocused_uses_wl_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tinyrecorder.wl_copy_available", lambda: True)
+    invoked: list[str] = []
+
+    def fake_copy(text: str) -> object:
+        invoked.append(text)
+        return Ok(None)
+
+    monkeypatch.setattr("tinyrecorder.copy_with_wl_copy", fake_copy)
+
+    result = copy_to_clipboard("hello", focused=False)
+
+    assert result.is_ok
+    assert invoked == ["hello"]
+
+
+def test_copy_to_clipboard_unfocused_without_wl_copy_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tinyrecorder.wl_copy_available", lambda: False)
+
+    result = copy_to_clipboard("hello", focused=False)
+
+    assert result.is_err
