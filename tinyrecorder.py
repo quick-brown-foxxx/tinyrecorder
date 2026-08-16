@@ -17,7 +17,7 @@
 
 Single-file Linux-first Qt speech-to-text app preserving the project's core DNA:
 tray-first UI, state machine, crash-safe PCM recording, OpenAI transcription,
-TOML config, and JSONL history.
+optional LLM punctuation post-processing, TOML config, and JSONL history.
 """
 
 from __future__ import annotations
@@ -79,6 +79,17 @@ APP_VERSION: Final = "0.0.1"
 DEFAULT_API_BASE_URL: Final = "https://api.openai.com/v1"
 DEFAULT_MODEL: Final = "gpt-4o-mini-transcribe"
 DEFAULT_LANGUAGE: Final = "auto"
+DEFAULT_LLM_MODEL: Final = "gpt-4o-mini"
+DEFAULT_LLM_PROMPT: Final = (
+    "You are an assistant that improves speech-to-text transcripts. "
+    "Sometimes transcripts have no punctuation at all, or punctuation is incorrect, or there are no sentence/paragpraph breaks, "
+    "and the text is one giant blob of words."
+    "But sometimes text is OK and you do not have to apply any modifications. "
+    "If needed, add punctuation and sentence/paragraph breaks to make the text readable: "
+    "split text into normal sentences, consider normal punctuation. "
+    "Do not change, add, or remove any words. Preserve the original language and meaning. "
+    "Return only the final transcript."
+)
 SUPPORTED_MODELS: Final[tuple[str, ...]] = (
     "gpt-4o-mini-transcribe",
     "gpt-4o-transcribe",
@@ -148,6 +159,11 @@ class AppConfig:
     sample_rate: int = SAMPLE_RATE
     device: str = ""
     auto_copy: bool = True
+    llm_enabled: bool = False
+    llm_api_key: str = ""
+    llm_api_base_url: str = DEFAULT_API_BASE_URL
+    llm_model: str = DEFAULT_LLM_MODEL
+    llm_prompt: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +215,7 @@ class TranscriptionResult:
     duration_sec: float
     model: str
     cost_estimate: float
+    warning: str = ""
 
 
 class RecordingState(StrEnum):
@@ -413,6 +430,11 @@ def _normalize_model(value: object) -> str:
     return text if text in SUPPORTED_MODELS else DEFAULT_MODEL
 
 
+def _normalize_llm_model(value: object) -> str:
+    text = str(value).strip() if value is not None else DEFAULT_LLM_MODEL
+    return text if text else DEFAULT_LLM_MODEL
+
+
 def _normalize_language(value: object) -> str:
     text = str(value) if value is not None else DEFAULT_LANGUAGE
     return text if text in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
@@ -436,10 +458,28 @@ def build_transcription_url(config: AppConfig) -> str:
     return f"{_normalize_api_base_url(config.api_base_url)}/audio/transcriptions"
 
 
+def build_llm_url(config: AppConfig) -> str:
+    """Return the OpenAI-compatible chat completions endpoint for this config."""
+
+    return f"{_normalize_api_base_url(config.llm_api_base_url)}/chat/completions"
+
+
 def can_transcribe_with_config(config: AppConfig) -> bool:
     """Return whether config has enough provider details to attempt transcription."""
 
     return bool(config.api_key.strip()) or _normalize_api_base_url(config.api_base_url) != DEFAULT_API_BASE_URL
+
+
+def can_postprocess_with_config(config: AppConfig) -> bool:
+    """Return whether config has enough provider details to attempt LLM post-processing."""
+
+    return bool(config.llm_api_key.strip()) or _normalize_api_base_url(config.llm_api_base_url) != DEFAULT_API_BASE_URL
+
+
+def resolve_llm_prompt(config: AppConfig) -> str:
+    """Return the configured LLM prompt, falling back to the default when empty."""
+
+    return config.llm_prompt.strip() if config.llm_prompt.strip() else DEFAULT_LLM_PROMPT
 
 
 def _config_to_toml_payload(
@@ -454,6 +494,13 @@ def _config_to_toml_payload(
             "device": config.device,
         },
         "app": {"auto_copy": config.auto_copy},
+        "llm": {
+            "enabled": config.llm_enabled,
+            "key": config.llm_api_key,
+            "base_url": _normalize_api_base_url(config.llm_api_base_url),
+            "model": config.llm_model,
+            "prompt": config.llm_prompt,
+        },
     }
 
 
@@ -485,7 +532,8 @@ def load_config(config_path: Path) -> AppResult[AppConfig]:
     api = _coerce_table(payload.get("api", {}))
     recording = _coerce_table(payload.get("recording", {}))
     app = _coerce_table(payload.get("app", {}))
-    if api is None or recording is None or app is None:
+    llm = _coerce_table(payload.get("llm", {}))
+    if api is None or recording is None or app is None or llm is None:
         return create_default_config(config_path)
 
     config = AppConfig(
@@ -497,6 +545,11 @@ def load_config(config_path: Path) -> AppResult[AppConfig]:
         sample_rate=_normalize_sample_rate(recording.get("sample_rate")),
         device=str(recording.get("device", "")),
         auto_copy=bool(app.get("auto_copy", True)),
+        llm_enabled=bool(llm.get("enabled", False)),
+        llm_api_key=str(llm.get("key", "")),
+        llm_api_base_url=_normalize_api_base_url(llm.get("base_url")),
+        llm_model=_normalize_llm_model(llm.get("model")),
+        llm_prompt=str(llm.get("prompt", "")),
     )
     repaired = save_config(config, config_path)
     if repaired.is_err:
@@ -899,7 +952,9 @@ class OpenAITranscriber:
             attempt += 1
             result = await self._attempt_transcription(audio_path.name, file_bytes, config)
             if result.is_ok:
-                return result
+                if not config.llm_enabled:
+                    return result
+                return await self._postprocess(result.unwrap(), config)
             error_text = result.unwrap_err()
             if not error_text.startswith("retry:"):
                 return Err(error_text)
@@ -907,6 +962,19 @@ class OpenAITranscriber:
                 return Err(error_text.removeprefix("retry:"))
             await asyncio.sleep(2.0 ** (attempt - 1))
         return Err("Transcription failed after retries")
+
+    async def _postprocess(
+        self,
+        transcript: TranscriptionResult,
+        config: AppConfig,
+    ) -> AppResult[TranscriptionResult]:
+        """Run LLM punctuation post-processing, keeping the raw transcript on failure."""
+
+        postprocess_result = await LLMPostProcessor().postprocess(transcript.text, config)
+        if postprocess_result.is_ok:
+            return Ok(replace(transcript, text=postprocess_result.unwrap()))
+        warning = f"LLM post-processing failed: {postprocess_result.unwrap_err()}. Showing raw transcript."
+        return Ok(replace(transcript, warning=warning))
 
     def _prepare_audio_request(self, audio_path: Path) -> AppResult[bytes]:
         try:
@@ -980,6 +1048,80 @@ class OpenAITranscriber:
         )
 
 
+class LLMPostProcessor:
+    """OpenAI-compatible chat completions client that cleans up transcripts."""
+
+    async def postprocess(self, text: str, config: AppConfig) -> AppResult[str]:
+        if not text.strip():
+            return Err("Cannot post-process an empty transcript")
+        if not can_postprocess_with_config(config):
+            return Err("Missing LLM API key. Open Settings and add one.")
+
+        prompt = resolve_llm_prompt(config)
+        payload: dict[str, object] = {
+            "model": config.llm_model,
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text},
+            ],
+            "temperature": 0,
+        }
+
+        attempt = 0
+        while attempt < 3:
+            attempt += 1
+            result = await self._attempt_postprocess(payload, config)
+            if result.is_ok:
+                return result
+            error_text = result.unwrap_err()
+            if not error_text.startswith("retry:"):
+                return Err(error_text)
+            if attempt >= 3:
+                return Err(error_text.removeprefix("retry:"))
+            await asyncio.sleep(2.0 ** (attempt - 1))
+        return Err("LLM post-processing failed after retries")
+
+    async def _attempt_postprocess(self, body: dict[str, object], config: AppConfig) -> AppResult[str]:
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if config.llm_api_key.strip():
+            headers["Authorization"] = f"Bearer {config.llm_api_key}"
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(build_llm_url(config), headers=headers, json=body)
+        except httpx.HTTPError as exc:
+            return Err(f"retry:Network error: {exc}")
+
+        if response.status_code == 401:
+            return Err("Invalid LLM API key. Check Settings.")
+        if response.status_code in RETRYABLE_STATUS_CODES:
+            return Err(f"retry:LLM returned {response.status_code}. Retrying.")
+        if response.status_code >= 400:
+            return Err(f"LLM post-processing failed: HTTP {response.status_code} {response.text[:200]}")
+
+        try:
+            payload_obj = _load_response_json(response)
+        except json.JSONDecodeError as exc:
+            return Err(f"Invalid LLM response: {exc}")
+        payload = _coerce_table(payload_obj)
+        if payload is None:
+            return Err("Invalid LLM response shape")
+        choices = _coerce_object_sequence(payload.get("choices", []))
+        if choices is None or not choices:
+            return Err("Invalid LLM response: missing choices")
+
+        first_choice = _coerce_table(choices[0])
+        if first_choice is None:
+            return Err("Invalid LLM response: malformed choice")
+        message = _coerce_table(first_choice.get("message", {}))
+        if message is None:
+            return Err("Invalid LLM response: missing message")
+        content = str(message.get("content", "")).strip()
+        if not content:
+            return Err("LLM returned an empty transcript")
+        return Ok(content)
+
+
 class SettingsDialog(QDialog):
     """Modal editor for the minimal config surface."""
 
@@ -1010,6 +1152,29 @@ class SettingsDialog(QDialog):
         self.noise_checkbox.setEnabled(False)
         form.addRow("", self.noise_checkbox)
 
+        llm_header = QLabel("LLM post-processing")
+        llm_header.setStyleSheet("font-weight: bold;")
+        form.addRow(llm_header)
+
+        self.llm_api_key_edit = QLineEdit(config.llm_api_key)
+        self.llm_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.llm_api_key_edit.setPlaceholderText("sk-...")
+        form.addRow("LLM API key", self.llm_api_key_edit)
+
+        self.llm_api_base_url_edit = QLineEdit(config.llm_api_base_url)
+        self.llm_api_base_url_edit.setPlaceholderText(DEFAULT_API_BASE_URL)
+        form.addRow("LLM API base URL", self.llm_api_base_url_edit)
+
+        self.llm_model_edit = QLineEdit(config.llm_model)
+        self.llm_model_edit.setPlaceholderText(DEFAULT_LLM_MODEL)
+        form.addRow("LLM model", self.llm_model_edit)
+
+        self.llm_prompt_edit = QPlainTextEdit()
+        self.llm_prompt_edit.setPlainText(config.llm_prompt)
+        self.llm_prompt_edit.setPlaceholderText("Leave empty to use the default prompt")
+        self.llm_prompt_edit.setFixedHeight(90)
+        form.addRow("LLM prompt", self.llm_prompt_edit)
+
         cache_label = QLabel(str(cache_dir))
         cache_label.setWordWrap(True)
         form.addRow("Audio cache", cache_label)
@@ -1033,6 +1198,10 @@ class SettingsDialog(QDialog):
             api_key=self.api_key_edit.text().strip(),
             api_base_url=_normalize_api_base_url(self.api_base_url_edit.text()),
             auto_copy=self.auto_copy_checkbox.isChecked(),
+            llm_api_key=self.llm_api_key_edit.text().strip(),
+            llm_api_base_url=_normalize_api_base_url(self.llm_api_base_url_edit.text()),
+            llm_model=_normalize_llm_model(self.llm_model_edit.text()),
+            llm_prompt=self.llm_prompt_edit.toPlainText().strip(),
         )
 
 
@@ -1155,6 +1324,9 @@ class MainWindow(QMainWindow):
             actions_row.addWidget(button)
         layout.addLayout(actions_row)
 
+        self.llm_postprocess_checkbox = QCheckBox("LLM post-processing")
+        layout.addWidget(self.llm_postprocess_checkbox)
+
         self.setCentralWidget(root)
 
         status = QStatusBar()
@@ -1264,6 +1436,7 @@ class TinyRecorderController(QObject):
         self.window.language_combo.currentTextChanged.connect(self._on_language_changed)
         self.window.model_combo.currentTextChanged.connect(self._on_model_changed)
         self.window.device_combo.currentTextChanged.connect(self._on_device_changed)
+        self.window.llm_postprocess_checkbox.toggled.connect(self._on_llm_postprocess_toggled)
 
         self.tray_icon = QSystemTrayIcon(self._create_app_icon(TrayIconState.IDLE), self)
         self.tray_icon.setToolTip(f"{APP_NAME} {APP_VERSION}")
@@ -1312,6 +1485,7 @@ class TinyRecorderController(QObject):
     def _apply_config_to_ui(self) -> None:
         self.window.language_combo.setCurrentText(self._config.language)
         self.window.model_combo.setCurrentText(self._config.model)
+        self.window.llm_postprocess_checkbox.setChecked(self._config.llm_enabled)
 
     def _on_language_changed(self, language: str) -> None:
         self._config = replace(self._config, language=language)
@@ -1323,6 +1497,10 @@ class TinyRecorderController(QObject):
 
     def _on_device_changed(self, device_name: str) -> None:
         self._config = replace(self._config, device=device_name)
+        save_config(self._config, self._paths.config_path)
+
+    def _on_llm_postprocess_toggled(self, enabled: bool) -> None:
+        self._config = replace(self._config, llm_enabled=enabled)
         save_config(self._config, self._paths.config_path)
 
     def _can_transcribe(self) -> bool:
@@ -1547,6 +1725,8 @@ class TinyRecorderController(QObject):
         self._state.current_state = RecordingState.SUCCESS
         self._show_done_tray_feedback()
         self.refresh_ui()
+        if transcript.warning:
+            QMessageBox.warning(self.window, APP_NAME, transcript.warning)
 
         history_entry = HistoryEntry(
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
