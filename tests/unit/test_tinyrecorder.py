@@ -91,6 +91,7 @@ def test_config_create_load_save_round_trip(tmp_path: Path) -> None:
         llm_api_key="sk-llm",
         llm_api_base_url="http://127.0.0.1:11434/v1",
         llm_model="custom-llm",
+        llm_reasoning_effort="medium",
         llm_prompt="Add punctuation only.",
     )
 
@@ -428,6 +429,7 @@ auto_copy = false
     assert config.llm_api_key == ""
     assert config.llm_api_base_url == "https://api.openai.com/v1"
     assert config.llm_model == DEFAULT_LLM_MODEL
+    assert config.llm_reasoning_effort == ""
     assert config.llm_prompt == ""
 
 
@@ -459,6 +461,7 @@ async def test_llm_postprocessor_sends_expected_chat_request(httpserver: HTTPSer
         llm_api_key="sk-llm",
         llm_api_base_url=httpserver.url_for("/v1"),
         llm_model="custom-llm",
+        llm_reasoning_effort="high",
         llm_prompt="Add punctuation only.",
     )
 
@@ -472,10 +475,27 @@ async def test_llm_postprocessor_sends_expected_chat_request(httpserver: HTTPSer
     body = cast(dict[str, object], requests[0][0].get_json())
     assert body["model"] == "custom-llm"
     assert body["temperature"] == 0
+    assert body["reasoning_effort"] == "high"
     assert body["messages"] == [
         {"role": "system", "content": "Add punctuation only."},
         {"role": "user", "content": "raw text"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_llm_postprocessor_omits_reasoning_effort_when_unset(httpserver: HTTPServer) -> None:
+    httpserver.expect_request("/v1/chat/completions", method="POST").respond_with_json(
+        {"choices": [{"message": {"content": "Clean text."}}]}
+    )
+    config = AppConfig(llm_api_key="sk-llm", llm_api_base_url=httpserver.url_for("/v1"))
+
+    result = await LLMPostProcessor().postprocess("raw text", config)
+
+    assert result.is_ok
+    matcher = httpserver.create_matcher("/v1/chat/completions", method="POST")
+    requests = list(httpserver.iter_matching_requests(matcher))
+    body = cast(dict[str, object], requests[0][0].get_json())
+    assert "reasoning_effort" not in body
 
 
 @pytest.mark.asyncio
@@ -585,6 +605,7 @@ def test_settings_dialog_applies_llm_fields(qapp: QApplication, tmp_path: Path) 
         llm_api_key="sk-llm",
         llm_api_base_url="http://127.0.0.1:11434/v1",
         llm_model="custom-llm",
+        llm_reasoning_effort="low",
         llm_prompt="Add punctuation only.",
     )
     dialog = SettingsDialog(config, tmp_path)
@@ -592,14 +613,17 @@ def test_settings_dialog_applies_llm_fields(qapp: QApplication, tmp_path: Path) 
     assert dialog.llm_api_key_edit.text() == "sk-llm"
     assert dialog.llm_api_base_url_edit.text() == "http://127.0.0.1:11434/v1"
     assert dialog.llm_model_edit.text() == "custom-llm"
+    assert dialog.llm_reasoning_effort_edit.text() == "low"
     assert dialog.llm_prompt_edit.toPlainText() == "Add punctuation only."
 
     dialog.llm_api_key_edit.setText("sk-new")
     dialog.llm_model_edit.setText("other-model")
+    dialog.llm_reasoning_effort_edit.setText("high")
     dialog.llm_prompt_edit.setPlainText("Custom prompt")
 
     updated = dialog.updated_config()
     assert updated.llm_api_key == "sk-new"
     assert updated.llm_model == "other-model"
+    assert updated.llm_reasoning_effort == "high"
     assert updated.llm_prompt == "Custom prompt"
     assert updated.llm_enabled == config.llm_enabled

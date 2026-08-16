@@ -58,6 +58,7 @@ class LLMSettings:
     api_key: str
     api_base_url: str
     model: str
+    reasoning_effort: str
     prompt: str
 
 
@@ -111,6 +112,11 @@ def _normalize_llm_model(value: object) -> str:
     return text if text else DEFAULT_LLM_MODEL
 
 
+def _normalize_llm_reasoning_effort(value: object) -> str:
+    text = str(value).strip() if value is not None else ""
+    return text
+
+
 def resolve_llm_prompt(value: object) -> str:
     text = str(value).strip() if value is not None else ""
     return text if text else DEFAULT_LLM_PROMPT
@@ -147,6 +153,7 @@ def load_llm_settings(config_path: Path) -> AppResult[LLMSettings]:
             api_key=str(llm.get("key", "")).strip(),
             api_base_url=_normalize_api_base_url(llm.get("base_url")),
             model=_normalize_llm_model(llm.get("model")),
+            reasoning_effort=_normalize_llm_reasoning_effort(llm.get("reasoning_effort")),
             prompt=resolve_llm_prompt(llm.get("prompt")),
         )
     )
@@ -259,6 +266,8 @@ def run_llm_debug(transcript: str) -> AppResult[list[str]]:
         ],
         "temperature": 0,
     }
+    if settings.reasoning_effort:
+        payload["reasoning_effort"] = settings.reasoning_effort
     headers: dict[str, str] = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {settings.api_key}",

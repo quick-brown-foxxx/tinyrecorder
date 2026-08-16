@@ -80,6 +80,7 @@ DEFAULT_API_BASE_URL: Final = "https://api.openai.com/v1"
 DEFAULT_MODEL: Final = "gpt-4o-mini-transcribe"
 DEFAULT_LANGUAGE: Final = "auto"
 DEFAULT_LLM_MODEL: Final = "gpt-4o-mini"
+DEFAULT_LLM_REASONING_EFFORT: Final = "None"
 DEFAULT_LLM_PROMPT: Final = (
     "You are an assistant that improves speech-to-text transcripts. "
     "Sometimes transcripts have no punctuation at all, or punctuation is incorrect, or there are no sentence/paragpraph breaks, "
@@ -163,6 +164,7 @@ class AppConfig:
     llm_api_key: str = ""
     llm_api_base_url: str = DEFAULT_API_BASE_URL
     llm_model: str = DEFAULT_LLM_MODEL
+    llm_reasoning_effort: str = ""
     llm_prompt: str = ""
 
 
@@ -435,6 +437,11 @@ def _normalize_llm_model(value: object) -> str:
     return text if text else DEFAULT_LLM_MODEL
 
 
+def _normalize_llm_reasoning_effort(value: object) -> str:
+    text = str(value).strip() if value is not None else ""
+    return text if text else DEFAULT_LLM_REASONING_EFFORT
+
+
 def _normalize_language(value: object) -> str:
     text = str(value) if value is not None else DEFAULT_LANGUAGE
     return text if text in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
@@ -499,6 +506,7 @@ def _config_to_toml_payload(
             "key": config.llm_api_key,
             "base_url": _normalize_api_base_url(config.llm_api_base_url),
             "model": config.llm_model,
+            "reasoning_effort": config.llm_reasoning_effort,
             "prompt": config.llm_prompt,
         },
     }
@@ -549,6 +557,7 @@ def load_config(config_path: Path) -> AppResult[AppConfig]:
         llm_api_key=str(llm.get("key", "")),
         llm_api_base_url=_normalize_api_base_url(llm.get("base_url")),
         llm_model=_normalize_llm_model(llm.get("model")),
+        llm_reasoning_effort=_normalize_llm_reasoning_effort(llm.get("reasoning_effort")),
         llm_prompt=str(llm.get("prompt", "")),
     )
     repaired = save_config(config, config_path)
@@ -1066,6 +1075,9 @@ class LLMPostProcessor:
             ],
             "temperature": 0,
         }
+        reasoning_effort = _normalize_llm_reasoning_effort(config.llm_reasoning_effort)
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
 
         attempt = 0
         while attempt < 3:
@@ -1169,6 +1181,10 @@ class SettingsDialog(QDialog):
         self.llm_model_edit.setPlaceholderText(DEFAULT_LLM_MODEL)
         form.addRow("LLM model", self.llm_model_edit)
 
+        self.llm_reasoning_effort_edit = QLineEdit(config.llm_reasoning_effort)
+        self.llm_reasoning_effort_edit.setPlaceholderText("low / medium / high (empty omits it)")
+        form.addRow("LLM reasoning effort", self.llm_reasoning_effort_edit)
+
         self.llm_prompt_edit = QPlainTextEdit()
         self.llm_prompt_edit.setPlainText(config.llm_prompt)
         self.llm_prompt_edit.setPlaceholderText("Leave empty to use the default prompt")
@@ -1201,6 +1217,7 @@ class SettingsDialog(QDialog):
             llm_api_key=self.llm_api_key_edit.text().strip(),
             llm_api_base_url=_normalize_api_base_url(self.llm_api_base_url_edit.text()),
             llm_model=_normalize_llm_model(self.llm_model_edit.text()),
+            llm_reasoning_effort=_normalize_llm_reasoning_effort(self.llm_reasoning_effort_edit.text()),
             llm_prompt=self.llm_prompt_edit.toPlainText().strip(),
         )
 
