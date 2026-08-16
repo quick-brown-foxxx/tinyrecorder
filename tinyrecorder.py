@@ -1070,8 +1070,8 @@ class LLMPostProcessor:
         payload: dict[str, object] = {
             "model": config.llm_model,
             "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": text},
+                {"role": "system", "content": "<system_promot>" + prompt + "/<system_promot>"},
+                {"role": "user", "content": "<transcript>" + text + "</transcript>"},
             ],
             "temperature": 0,
         }
