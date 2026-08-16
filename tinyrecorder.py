@@ -83,6 +83,8 @@ SUPPORTED_MODELS: Final[tuple[str, ...]] = (
     "gpt-4o-mini-transcribe",
     "gpt-4o-transcribe",
     "whisper-1",
+    "whisper-large-v3-turbo",
+    "whisper-large-v3",
 )
 SUPPORTED_LANGUAGES: Final[tuple[str, ...]] = ("auto", "en", "ru")
 SAMPLE_RATE: Final = 16000
@@ -106,6 +108,8 @@ MODEL_PRICES_PER_MINUTE: Final[dict[str, float]] = {
     "gpt-4o-mini-transcribe": 0.003,
     "gpt-4o-transcribe": 0.006,
     "whisper-1": 0.006,
+    "whisper-large-v3-turbo": 0.000667,
+    "whisper-large-v3": 0.00185,
 }
 
 type AppResult[T] = Result[T, str]
