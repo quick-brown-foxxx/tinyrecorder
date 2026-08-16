@@ -45,6 +45,11 @@ requires = ["hatchling"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/tinyrecorder"]
 
+# hack for LSPs
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+
 [tool.basedpyright]
 pythonPlatform = "All"
 pythonVersion = "3.12"
