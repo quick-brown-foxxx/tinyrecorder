@@ -75,7 +75,7 @@ requires = ["hatchling"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/tinyrecorder"]
 
-[tool.basedpyright]
+[tool.pyrigt]
 pythonPlatform = "Linux"
 pythonVersion = "3.12"
 venvPath = "."
