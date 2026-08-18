@@ -130,4 +130,4 @@ markers = [
 test = "pytest"
 app = "python -m tinyrecorder"
 install_local_desktop.shell = "uv run --script scripts/install_local_desktop.py"
-lint_full.shell = "basedpyright . && ruff check --fix . && ruff format ."
+lint_full.shell = "basedpyright . && ruff format . && ruff check --fix ."
